@@ -1,8 +1,8 @@
 from groq import Groq
 from database import engine
 from sqlalchemy import text
-
-client = Groq(api_key="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")
+import os
+client = Groq(api_key=os.environ.get("GROQ_API_KEY", "your-groq-api-key-here"))
 
 def breakdown_task(task_description):
     prompt = f"""
