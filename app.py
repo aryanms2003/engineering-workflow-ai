@@ -126,6 +126,66 @@ if page == "📊 Dashboard":
         st.warning(f"{len(high_priority_stuck)} high priority tasks are not yet started!")
         st.dataframe(high_priority_stuck[['title','priority','stage']])
 
+    # Rebalance workload
+    st.markdown("---")
+    st.subheader("⚖️ Rebalance Team Workload")
+    st.markdown("Automatically suggest task reassignments for overloaded developers")
+
+    if st.button("🔄 Rebalance Now", type="primary"):
+        with engine.connect() as conn:
+            overloaded = devs[devs['workload'] > 65]
+            free_devs   = devs[devs['workload'] < 40]
+
+            if overloaded.empty:
+                st.success("Team is balanced — no rebalancing needed!")
+            elif free_devs.empty:
+                st.warning("No free developers available to reassign tasks to.")
+            else:
+                suggestions = []
+                for _, od in overloaded.iterrows():
+                    dev_tasks = pd.read_sql(f"""
+                        SELECT * FROM tasks 
+                        WHERE assigned_to = {od['id']} 
+                        AND status = 'todo'
+                        LIMIT 1
+                    """, conn)
+
+                    if not dev_tasks.empty:
+                        task = dev_tasks.iloc[0]
+                        best_free = free_devs.iloc[0]
+                        suggestions.append({
+                            "Move Task":     task['title'],
+                            "From":          od['name'],
+                            "From Workload": f"{od['workload']}%",
+                            "To":            best_free['name'],
+                            "To Workload":   f"{best_free['workload']}%"
+                        })
+
+                if suggestions:
+                    st.warning(f"Found {len(suggestions)} rebalancing suggestions:")
+                    st.dataframe(pd.DataFrame(suggestions), use_container_width=True)
+
+                    if st.button("✅ Apply Rebalancing"):
+                        for s in suggestions:
+                            conn.execute(text("""
+                                UPDATE tasks SET assigned_to = (
+                                    SELECT id FROM developers WHERE name = :to_name
+                                ) WHERE title = :task_title
+                            """), {"to_name": s["To"], "task_title": s["Move Task"]})
+                            conn.execute(text("""
+                                UPDATE developers SET workload = MAX(0, workload - 10)
+                                WHERE name = :from_name
+                            """), {"from_name": s["From"]})
+                            conn.execute(text("""
+                                UPDATE developers SET workload = MIN(100, workload + 10)
+                                WHERE name = :to_name
+                            """), {"to_name": s["To"]})
+                        conn.commit()
+                        st.success("Workload rebalanced successfully!")
+                        st.rerun()
+                else:
+                    st.info("Overloaded developers have no todo tasks to reassign.")
+                    
 # ════════════════════════════════════════════════════════════
 # PAGE 2: SDLC WORKFLOW
 # ════════════════════════════════════════════════════════════
